@@ -11,6 +11,7 @@ import '../../data/models/models.dart';
 import '../../providers/providers.dart';
 import '../../services/crypto_service.dart';
 import '../../services/media_service.dart';
+import '../../services/bluetooth_service.dart';
 import '../../widgets/shared_widgets.dart';
 import '../auth/set_pin_screen.dart';
 
@@ -275,6 +276,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     final db = ref.read(databaseProvider);
     await db.saveCurrentUser(user);
+
+    // Now that a profile exists, (re)initialise the transport with the real
+    // identity. On a fresh install this is the FIRST time Nearby learns who we
+    // are — without it, discovery/messaging would run with an empty user id.
+    await BluetoothService().init();
 
     ref.read(currentUserProvider.notifier).state = user;
     ref.read(conversationsProvider.notifier).refresh();

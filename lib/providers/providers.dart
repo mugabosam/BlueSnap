@@ -174,6 +174,3 @@ final nearbyDevicesProvider = Provider<List<NearbyDevice>>((ref) {
   final bt = ref.watch(bluetoothProvider);
   return bt.discoveredDevices;
 });
-
-// ── Navigation State ─────────────────────────────────────
-final currentTabProvider = StateProvider<int>((ref) => 0);

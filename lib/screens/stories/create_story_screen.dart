@@ -13,7 +13,9 @@ import '../../services/bluetooth_service.dart';
 import '../../widgets/shared_widgets.dart';
 
 class CreateStoryScreen extends ConsumerStatefulWidget {
-  const CreateStoryScreen({super.key});
+  /// Optional pre-captured photo/video (e.g. from the camera screen).
+  final String? initialImagePath;
+  const CreateStoryScreen({super.key, this.initialImagePath});
 
   @override
   ConsumerState<CreateStoryScreen> createState() => _CreateStoryScreenState();
@@ -25,7 +27,7 @@ class _CreateStoryScreenState extends ConsumerState<CreateStoryScreen> {
   final _picker = ImagePicker();
   int _selectedBgIndex = 0;
   bool _isPosting = false;
-  String? _imagePath;
+  late String? _imagePath = widget.initialImagePath;
 
   static const _backgrounds = [
     [Color(0xFF6C5CE7), Color(0xFF0A84FF)],

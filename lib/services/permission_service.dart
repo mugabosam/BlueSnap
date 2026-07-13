@@ -74,8 +74,10 @@ class PermissionService {
     return statuses.values.every((status) => status.isGranted);
   }
 
-  /// Open app settings if permissions permanently denied
-  Future<void> openAppSettings() async {
+  /// Open the OS app-settings page (e.g. when a permission is permanently
+  /// denied). Named distinctly so it doesn't shadow — and infinitely recurse
+  /// into — permission_handler's top-level openAppSettings().
+  Future<void> openSettingsPage() async {
     await openAppSettings();
   }
 

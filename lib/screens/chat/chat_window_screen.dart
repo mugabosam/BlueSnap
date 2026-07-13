@@ -352,12 +352,14 @@ class _ChatWindowScreenState extends ConsumerState<ChatWindowScreen> {
     );
   }
 
-  void _showFingerprint() {
+  Future<void> _showFingerprint() async {
     final db = DatabaseService();
-    final myFp = CryptoService.fingerprint(CryptoService().myPublicKeyBase64);
+    final myFp = await CryptoService.fingerprint(CryptoService().myPublicKeyBase64);
     final peerKey = db.pinnedKeyFor(widget.peerId);
-    final peerFp = peerKey != null ? CryptoService.fingerprint(peerKey) : null;
+    final peerFp =
+        peerKey != null ? await CryptoService.fingerprint(peerKey) : null;
     final verified = db.isVerified(widget.peerId);
+    if (!mounted) return;
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(

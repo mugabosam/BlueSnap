@@ -28,6 +28,7 @@ class _LockScreenState extends State<LockScreen> {
   bool _error = false;
   bool _checking = false;
   bool _biometricReady = false;
+  String? _lockMsg; // shown when the account is temporarily locked out
 
   @override
   void initState() {
@@ -64,19 +65,42 @@ class _LockScreenState extends State<LockScreen> {
   Future<void> _submit() async {
     if (_entry.length < 4) return;
     setState(() => _checking = true);
+
+    final lock = await _auth.lockoutRemaining();
+    if (lock > Duration.zero) {
+      if (!mounted) return;
+      HapticFeedback.heavyImpact();
+      setState(() {
+        _error = true;
+        _lockMsg = 'Too many attempts. Try again in ${_fmt(lock)}.';
+        _entry = '';
+        _checking = false;
+      });
+      return;
+    }
+
     final ok = await _auth.verifyPin(_entry);
     if (!mounted) return;
     if (ok) {
       widget.onUnlocked();
     } else {
       HapticFeedback.heavyImpact();
+      final after = await _auth.lockoutRemaining();
+      if (!mounted) return;
       setState(() {
         _error = true;
+        _lockMsg = after > Duration.zero
+            ? 'Too many attempts. Try again in ${_fmt(after)}.'
+            : null;
         _entry = '';
         _checking = false;
       });
     }
   }
+
+  String _fmt(Duration d) => d.inMinutes >= 1
+      ? '${d.inMinutes} min'
+      : '${d.inSeconds} sec';
 
   @override
   Widget build(BuildContext context) {
@@ -100,9 +124,13 @@ class _LockScreenState extends State<LockScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              _error ? 'Wrong PIN, try again' : 'Enter your PIN to unlock',
+              _lockMsg ??
+                  (_error ? 'Wrong PIN, try again' : 'Enter your PIN to unlock'),
+              textAlign: TextAlign.center,
               style: BlueSnapTheme.bodyS.copyWith(
-                color: _error ? BlueSnapTheme.accentRed : BlueSnapTheme.textSecondary,
+                color: (_error || _lockMsg != null)
+                    ? BlueSnapTheme.accentRed
+                    : BlueSnapTheme.textSecondary,
               ),
             ),
             const SizedBox(height: 28),

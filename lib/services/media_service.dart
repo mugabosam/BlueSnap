@@ -1,6 +1,5 @@
 /// BlueSnap Media Service — compression pipeline for BT transfer
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:uuid/uuid.dart';
@@ -69,29 +68,6 @@ class MediaService {
     } catch (e) {
       return null;
     }
-  }
-
-  /// Split file into 64KB chunks for BT transfer with resume support
-  Future<List<Uint8List>> chunkFile(File file) async {
-    final bytes = await file.readAsBytes();
-    final chunks = <Uint8List>[];
-    for (int i = 0; i < bytes.length; i += AppConstants.chunkSizeBytes) {
-      final end = (i + AppConstants.chunkSizeBytes).clamp(0, bytes.length);
-      chunks.add(Uint8List.fromList(bytes.sublist(i, end)));
-    }
-    return chunks;
-  }
-
-  /// Reassemble chunks into a file
-  Future<File> reassembleChunks(List<Uint8List> chunks, String fileName) async {
-    final dir = await getTemporaryDirectory();
-    final file = File('${dir.path}/$fileName');
-    final sink = file.openWrite();
-    for (final chunk in chunks) {
-      sink.add(chunk);
-    }
-    await sink.close();
-    return file;
   }
 
   /// Estimate BT Classic transfer time

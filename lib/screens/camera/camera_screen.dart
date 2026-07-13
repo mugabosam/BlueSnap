@@ -414,12 +414,16 @@ class _CameraScreenState extends ConsumerState<CameraScreen>
                       child: _bottomAction(Icons.download, 'Save'),
                     ),
                     const SizedBox(width: 12),
-                    // Story button
+                    // Story button — carry the captured photo into the story.
                     GestureDetector(
                       onTap: () {
+                        final captured = _capturedPath;
                         setState(() => _showPreview = false);
                         Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const CreateStoryScreen()),
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                CreateStoryScreen(initialImagePath: captured),
+                          ),
                         );
                       },
                       child: _bottomAction(Icons.auto_awesome, 'Story'),

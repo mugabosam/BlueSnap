@@ -38,7 +38,8 @@ class _SetPinScreenState extends State<SetPinScreen> {
   }
 
   Future<void> _submit() async {
-    if (_entry.length < 4) return;
+    // Require a full 6-digit PIN — meaningfully harder to guess than 4.
+    if (_entry.length < 6) return;
     if (!_confirming) {
       setState(() {
         _firstEntry = _entry;
@@ -109,7 +110,7 @@ class _SetPinScreenState extends State<SetPinScreen> {
             Text(
               _mismatch
                   ? "PINs didn't match — try again"
-                  : 'Locks your messages on this device (4–6 digits)',
+                  : 'Locks your messages on this device (6 digits)',
               style: BlueSnapTheme.bodyS.copyWith(
                 color: _mismatch ? BlueSnapTheme.accentRed : BlueSnapTheme.textSecondary,
               ),

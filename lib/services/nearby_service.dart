@@ -329,7 +329,8 @@ class NearbyService extends ChangeNotifier {
         connected: true,
       ));
 
-      // Exchange public keys so this session can be end-to-end encrypted.
+      // Run the authenticated ephemeral handshake so this session is
+      // end-to-end encrypted AND forward-secret.
       _sendKeyExchange(endpointId);
 
       debugPrint('[Nearby] Connected to $name ($endpointId)');
@@ -358,6 +359,10 @@ class NearbyService extends ChangeNotifier {
       name: name ?? 'Unknown',
       connected: false,
     ));
+
+    // Wipe the session's ephemeral + derived keys so past traffic in this
+    // session can never be decrypted again (forward secrecy).
+    _crypto.endSession(endpointId);
 
     if (_connectedEndpoints.isEmpty) {
       _state = NearbyState.idle;
@@ -429,10 +434,9 @@ class NearbyService extends ChangeNotifier {
   /// Decrypt an encrypted control payload if needed, then hand it up as JSON text.
   void _emitControl(String endpointId, Map<String, dynamic> json, Uint8List raw) {
     if (json['enc'] == true) {
-      final peerKey = _peerKeys[endpointId] ?? _db.pinnedKeyFor(endpointId);
       final body = json['content'] as String?;
-      if (peerKey == null || body == null) return;
-      _crypto.decryptFrom(peerKey, body).then((clear) {
+      if (body == null || !_crypto.hasSession(endpointId)) return;
+      _crypto.decryptSession(endpointId, body).then((clear) {
         if (clear != null) {
           _messageReceivedController.add((endpointId: endpointId, message: clear));
         }
@@ -442,8 +446,9 @@ class NearbyService extends ChangeNotifier {
     _messageReceivedController.add((endpointId: endpointId, message: utf8.decode(raw)));
   }
 
-  void _handleKeyExchange(String endpointId, Map<String, dynamic> json) {
+  Future<void> _handleKeyExchange(String endpointId, Map<String, dynamic> json) async {
     final pub = json['pubKey'] as String?;
+    final ephKey = json['ephKey'] as String?;
     final name = json['name'] as String? ?? _connectedEndpoints[endpointId] ?? 'Unknown';
     if (pub == null || pub.isEmpty) return;
 
@@ -456,11 +461,19 @@ class NearbyService extends ChangeNotifier {
     } else if (pinned != pub) {
       debugPrint('[Nearby] ⚠️ KEY MISMATCH for $endpointId — refusing to trust new key');
       _keyMismatchController.add((endpointId: endpointId, name: name));
-      return; // do not update the session key or flush the queue
+      return; // do not complete the session or flush the queue
     }
 
     _peerKeys[endpointId] = pub;
-    debugPrint('[Nearby] Got public key from $endpointId (pinned)');
+
+    // Complete the forward-secret handshake now that we have the peer's static
+    // (pinned) and ephemeral keys. The authentication is bound to the pinned
+    // static key; the ephemeral keys give forward secrecy.
+    if (ephKey != null && ephKey.isNotEmpty) {
+      final ok = await _crypto.completeSession(endpointId, pub, ephKey);
+      debugPrint('[Nearby] FS session ${ok ? 'established' : 'FAILED'} with $endpointId');
+    }
+
     // A peer is now reachable and we can encrypt to them — drain any backlog.
     _flushQueueFor(endpointId);
   }
@@ -513,16 +526,15 @@ class NearbyService extends ChangeNotifier {
 
     String? content = rawContent;
     if (isEncrypted) {
-      // Only decrypt with the key we pinned for this peer. We deliberately do
-      // NOT fall back to an inline `senderKey`: accepting a per-message key
-      // would let an attacker assert a fresh identity and defeat pinning.
-      final peerKey = _peerKeys[endpointId] ?? _db.pinnedKeyFor(endpointId);
-      if (peerKey == null) {
-        debugPrint('[Nearby] Encrypted message but no pinned peer key — dropping');
+      // Decrypt only with the forward-secret session key established via the
+      // pinned-identity handshake. No fallback to an inline per-message key —
+      // that would let an attacker assert a fresh identity and defeat pinning.
+      if (!_crypto.hasSession(endpointId)) {
+        debugPrint('[Nearby] Encrypted message but no secure session — dropping');
         return;
       }
       // Decryption is async; finish handling there.
-      _crypto.decryptFrom(peerKey, rawContent).then((clear) {
+      _crypto.decryptSession(endpointId, rawContent).then((clear) {
         if (clear == null) {
           debugPrint('[Nearby] Failed to decrypt message $id — dropping');
           return;
@@ -563,7 +575,8 @@ class NearbyService extends ChangeNotifier {
     conv.unreadCount += 1;
     _db.saveConversation(conv);
 
-    debugPrint('[Nearby] Message from $senderName: $content');
+    // Do NOT log message content — it would leak plaintext into logcat.
+    debugPrint('[Nearby] Message received from $endpointId');
     StreakService().recordPeer(convId);
     _messageReceivedController.add((endpointId: endpointId, message: content));
     NotificationService().showMessage(
@@ -575,11 +588,14 @@ class NearbyService extends ChangeNotifier {
   // ── Key exchange + acks ──────────────────────────────
   Future<void> _sendKeyExchange(String endpointId) async {
     try {
+      // Fresh ephemeral key for this connection → forward secrecy.
+      final ephKey = await _crypto.startSession(endpointId);
       final payload = jsonEncode({
         'type': 'key_exchange',
         'userId': _myId,
         'name': _myName,
-        'pubKey': _crypto.myPublicKeyBase64,
+        'pubKey': _crypto.myPublicKeyBase64, // long-lived, pinned (auth)
+        'ephKey': ephKey, // ephemeral, per-session (forward secrecy)
       });
       await _nearby.sendBytesPayload(
           endpointId, Uint8List.fromList(utf8.encode(payload)));
@@ -664,7 +680,12 @@ class NearbyService extends ChangeNotifier {
       final destPath = '${dir.path}/$fileName';
       await src.copy(destPath);
 
-      final typeIdx = (meta['msgType'] as int?) ?? MessageType.image.index;
+      // The peer controls msgType — validate it so a bogus index can't crash
+      // rendering (MessageType.values[index] would throw a RangeError).
+      final rawType = (meta['msgType'] as int?) ?? MessageType.image.index;
+      final typeIdx = (rawType >= 0 && rawType < MessageType.values.length)
+          ? rawType
+          : MessageType.file.index;
       final convId = 'conv_$endpointId';
       final id = (meta['id'] as String?) ?? _uuid.v4();
       if (_db.getMessage(id) != null) return; // idempotent
@@ -716,10 +737,24 @@ class NearbyService extends ChangeNotifier {
   }
 
   // ── Incoming feed (posts / stories) ──────────────────
-  void _handleIncomingFeed(String endpointId, Map<String, dynamic> json,
-      {required bool isStory}) {
+  Future<void> _handleIncomingFeed(String endpointId, Map<String, dynamic> json,
+      {required bool isStory}) async {
     if (_db.isBlocked(endpointId)) return;
     if (!_withinRate(endpointId)) return;
+
+    // Feed items are encrypted with the session key; unseal before ingesting.
+    if (json['enc'] == true) {
+      final body = json['content'] as String?;
+      if (body == null || !_crypto.hasSession(endpointId)) return;
+      final clear = await _crypto.decryptSession(endpointId, body);
+      if (clear == null) return;
+      try {
+        json = jsonDecode(clear) as Map<String, dynamic>;
+      } catch (_) {
+        return;
+      }
+    }
+
     final id = json['id'] as String?;
     if (id == null) return;
 
@@ -809,12 +844,12 @@ class NearbyService extends ChangeNotifier {
   Future<bool> _sendMessageInternal(String endpointId,
       {required String messageId, required String content}) async {
     try {
-      final peerKey = _peerKeys[endpointId];
       String wireContent = content;
       bool encrypted = false;
 
-      if (peerKey != null && _crypto.isReady) {
-        final sealed = await _crypto.encryptFor(peerKey, content);
+      // Encrypt with the forward-secret session key for this connection.
+      if (_crypto.hasSession(endpointId)) {
+        final sealed = await _crypto.encryptSession(endpointId, content);
         if (sealed != null) {
           wireContent = sealed;
           encrypted = true;
@@ -852,9 +887,8 @@ class NearbyService extends ChangeNotifier {
     if (!_connectedEndpoints.containsKey(endpointId)) return false;
     try {
       Map<String, dynamic> wire = payload;
-      final peerKey = _peerKeys[endpointId];
-      if (encrypt && peerKey != null && _crypto.isReady) {
-        final sealed = await _crypto.encryptFor(peerKey, jsonEncode(payload));
+      if (encrypt && _crypto.hasSession(endpointId)) {
+        final sealed = await _crypto.encryptSession(endpointId, jsonEncode(payload));
         if (sealed != null) {
           wire = {'type': payload['type'], 'enc': true, 'content': sealed};
         }
@@ -869,12 +903,21 @@ class NearbyService extends ChangeNotifier {
   }
 
   /// Broadcast a feed post (or story) to every connected peer so it propagates
-  /// device-to-device. Text-only for now; media posts stay local.
+  /// device-to-device. Encrypted per-peer with the forward-secret session key;
+  /// falls back to plaintext only if a peer somehow has no session yet.
   Future<void> broadcastFeed(Map<String, dynamic> item) async {
-    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(item)));
+    final type = item['type'];
     for (final endpointId in _connectedEndpoints.keys) {
       try {
-        await _nearby.sendBytesPayload(endpointId, bytes);
+        Map<String, dynamic> wire = item;
+        if (_crypto.hasSession(endpointId)) {
+          final sealed = await _crypto.encryptSession(endpointId, jsonEncode(item));
+          if (sealed != null) {
+            wire = {'type': type, 'enc': true, 'content': sealed};
+          }
+        }
+        await _nearby.sendBytesPayload(
+            endpointId, Uint8List.fromList(utf8.encode(jsonEncode(wire))));
       } catch (_) {/* best effort */}
     }
   }
@@ -923,10 +966,13 @@ class NearbyService extends ChangeNotifier {
   }
 
   // ── Cleanup ──────────────────────────────────────────
+  // ChangeNotifier.dispose() is synchronous, so we must NOT make this async
+  // (the caller can't await it through the ChangeNotifier contract). Kick off
+  // the radio teardown as fire-and-forget, then close controllers + super.
   @override
-  Future<void> dispose() async {
-    await stopAll();
-    await disconnectAll();
+  void dispose() {
+    unawaited(stopAll());
+    unawaited(disconnectAll());
     _deviceDiscoveredController.close();
     _deviceLostController.close();
     _messageReceivedController.close();

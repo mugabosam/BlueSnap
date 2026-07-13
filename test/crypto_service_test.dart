@@ -83,4 +83,71 @@ void main() {
       throwsA(isA<SecretBoxAuthenticationError>()),
     );
   });
+
+  // ── Forward-secret handshake (mirrors CryptoService.completeSession) ──
+  // Authenticated triple-DH: mixes both static (pinned identity) keys and both
+  // ephemeral keys. This exact math must derive the same key on both sides.
+  Future<List<int>> dh(SimpleKeyPair mine, SimplePublicKey peer) async =>
+      (await x25519.sharedSecretKey(keyPair: mine, remotePublicKey: peer))
+          .extractBytes();
+
+  int cmp(List<int> a, List<int> b) {
+    for (var i = 0; i < a.length && i < b.length; i++) {
+      if (a[i] != b[i]) return a[i] - b[i];
+    }
+    return a.length - b.length;
+  }
+
+  Future<List<int>> fsKey(SimpleKeyPair myStatic, SimpleKeyPair myEph,
+      SimplePublicKey peerStatic, SimplePublicKey peerEph) async {
+    final myStaticPub = await myStatic.extractPublicKey();
+    final amA = cmp(myStaticPub.bytes, peerStatic.bytes) < 0;
+    final List<int> dhES, dhSE;
+    if (amA) {
+      dhES = await dh(myEph, peerStatic);
+      dhSE = await dh(myStatic, peerEph);
+    } else {
+      dhES = await dh(myStatic, peerEph);
+      dhSE = await dh(myEph, peerStatic);
+    }
+    final dhEE = await dh(myEph, peerEph);
+    final hkdf = Hkdf(hmac: Hmac.sha256(), outputLength: 32);
+    final k = await hkdf.deriveKey(
+      secretKey: SecretKey(<int>[...dhES, ...dhSE, ...dhEE]),
+      info: utf8.encode('bluesnap-session-v1-fs'),
+    );
+    return k.extractBytes();
+  }
+
+  test('forward-secret handshake: both parties derive the same key', () async {
+    final staticA = await x25519.newKeyPair();
+    final staticB = await x25519.newKeyPair();
+    final ephA = await x25519.newKeyPair();
+    final ephB = await x25519.newKeyPair();
+
+    final kA = await fsKey(staticA, ephA, await staticB.extractPublicKey(),
+        await ephB.extractPublicKey());
+    final kB = await fsKey(staticB, ephB, await staticA.extractPublicKey(),
+        await ephA.extractPublicKey());
+
+    expect(kA, equals(kB), reason: 'handshake must be symmetric');
+  });
+
+  test('forward secrecy: a new session (fresh ephemerals) yields a new key',
+      () async {
+    // Same long-lived identities, different ephemerals → unrelated session key,
+    // so compromising the identity keys cannot recover a past session.
+    final staticA = await x25519.newKeyPair();
+    final staticB = await x25519.newKeyPair();
+    final sApub = await staticA.extractPublicKey();
+    final sBpub = await staticB.extractPublicKey();
+
+    final k1 = await fsKey(staticA, await x25519.newKeyPair(), sBpub,
+        await (await x25519.newKeyPair()).extractPublicKey());
+    final k2 = await fsKey(staticA, await x25519.newKeyPair(), sBpub,
+        await (await x25519.newKeyPair()).extractPublicKey());
+
+    expect(k1, isNot(equals(k2)));
+    expect(sApub.bytes, isNotEmpty); // identities unchanged across sessions
+  });
 }

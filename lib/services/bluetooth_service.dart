@@ -63,7 +63,12 @@ class BluetoothService extends ChangeNotifier {
   /// A feed post/story arrived from a peer.
   Stream<String> get onFeedUpdated => _nearby.onFeedUpdated;
 
+  bool _listenersWired = false;
+
   // ── Init ─────────────────────────────────────────────
+  /// Idempotent. Safe to call again after onboarding creates the profile —
+  /// it (re)initializes the Nearby identity with the current user without
+  /// re-wiring the stream listeners (which would double-process every event).
   Future<void> init() async {
     _state = BluetoothServiceState.idle;
     _stateController.add(_state);
@@ -71,7 +76,12 @@ class BluetoothService extends ChangeNotifier {
     final user = _db.currentUser;
     if (user != null) {
       await _nearby.init(userName: user.displayName, userId: user.id);
-    } else {
+    }
+
+    if (_listenersWired) return; // identity refreshed; don't re-add listeners
+    _listenersWired = true;
+
+    if (user == null) {
       debugPrint('[BluetoothService] No current user yet — Nearby starts after onboarding.');
     }
 

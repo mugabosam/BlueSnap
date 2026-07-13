@@ -17,7 +17,7 @@ import '../../core/constants.dart';
 import '../../services/bluetooth_service.dart';
 import 'create_post_screen.dart';
 import 'post_detail_screen.dart';
-import '../stories/create_story_screen.dart';
+import '../camera/camera_screen.dart';
 import '../stories/story_viewer_screen.dart';
 
 class HomeFeedScreen extends ConsumerWidget {
@@ -235,8 +235,9 @@ class HomeFeedScreen extends ConsumerWidget {
 
   Widget _myStoryItem(BuildContext context, User? me) {
     return GestureDetector(
+      // Camera-first, like Snapchat: capture, then post to your story.
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const CreateStoryScreen()),
+        MaterialPageRoute(builder: (_) => const CameraScreen()),
       ),
       child: SizedBox(
         width: 64,

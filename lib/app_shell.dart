@@ -1,4 +1,4 @@
-/// BlueSnap App Shell — 5-tab navigation (Home, Search, Reels, Messages, Profile)
+/// BlueSnap App Shell — 4-tab navigation (Home, Search, Messages, Profile)
 library;
 
 import 'dart:async';
