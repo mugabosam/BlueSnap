@@ -18,6 +18,7 @@ import '../../services/bluetooth_service.dart';
 import 'create_post_screen.dart';
 import 'post_detail_screen.dart';
 import '../camera/camera_screen.dart';
+import '../chat/chat_window_screen.dart';
 import '../stories/story_viewer_screen.dart';
 
 class HomeFeedScreen extends ConsumerWidget {
@@ -64,18 +65,35 @@ class HomeFeedScreen extends ConsumerWidget {
                         subtitle: 'Posts from people nearby will show up here.',
                       ),
                     )
-                  : SliverList(
-                      delegate: SliverChildBuilderDelegate(
-                        (_, i) => _postCard(context, ref, posts[i], bookmarks)
-                            .animate()
-                            .fadeIn(duration: 300.ms, delay: (i * 45).ms)
-                            .slideY(begin: 0.04, end: 0, curve: Curves.easeOut),
-                        childCount: posts.length,
-                      ),
-                    ),
+                  : _feedWithSuggestions(context, ref, posts, bookmarks),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// The feed with a "People near you" suggestion carousel injected after a few
+  /// posts — the way Instagram slots "Suggested for you" into the middle.
+  Widget _feedWithSuggestions(
+      BuildContext context, WidgetRef ref, List<Post> posts, Set<String> bookmarks) {
+    // Insert the carousel after the 3rd post (or at the end for short feeds).
+    final insertAt = posts.length >= 3 ? 3 : posts.length;
+    final total = posts.length + 1; // +1 for the carousel slot
+
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (_, i) {
+          if (i == insertAt) {
+            return const _NearbyPeopleCarousel();
+          }
+          final postIndex = i > insertAt ? i - 1 : i;
+          return _postCard(context, ref, posts[postIndex], bookmarks)
+              .animate()
+              .fadeIn(duration: 300.ms, delay: (postIndex * 45).ms)
+              .slideY(begin: 0.04, end: 0, curve: Curves.easeOut);
+        },
+        childCount: total,
       ),
     );
   }
@@ -683,6 +701,136 @@ class HomeFeedScreen extends ConsumerWidget {
       return '${diff.inDays} ${diff.inDays == 1 ? 'DAY' : 'DAYS'} AGO';
     }
     return DateFormat.MMMd().format(time).toUpperCase();
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// "People near you" — Instagram-style suggestion carousel injected mid-feed.
+// Shows real discovered devices; tap to start a chat.
+// ══════════════════════════════════════════════════════════
+class _NearbyPeopleCarousel extends ConsumerWidget {
+  const _NearbyPeopleCarousel();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final devices = ref.watch(nearbyDevicesProvider);
+    final scanning = ref.read(bluetoothProvider).isScanning;
+    // Nothing found and not even looking → take no space.
+    if (devices.isEmpty && !scanning) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: BlueSnapTheme.divider, width: 0.5),
+          bottom: BorderSide(color: BlueSnapTheme.divider, width: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(
+              children: [
+                const Icon(AppIcons.people, size: 18, color: BlueSnapTheme.textPrimary),
+                const SizedBox(width: 8),
+                const Text('People near you', style: BlueSnapTheme.username),
+                const Spacer(),
+                Text(devices.isEmpty ? 'Looking…' : '${devices.length} nearby',
+                    style: BlueSnapTheme.caption
+                        .copyWith(color: BlueSnapTheme.textSecondary)),
+              ],
+            ),
+          ),
+          // Discovering with nothing yet → shimmer skeleton cards.
+          if (devices.isEmpty)
+            const SkeletonPeopleRow()
+          else
+          SizedBox(
+            height: 188,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              itemCount: devices.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 12),
+              itemBuilder: (_, i) => _card(context, ref, devices[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _card(BuildContext context, WidgetRef ref, NearbyDevice device) {
+    return Container(
+      width: 132,
+      decoration: BoxDecoration(
+        color: BlueSnapTheme.bgCard,
+        borderRadius: BorderRadius.circular(BlueSnapTheme.radiusL),
+        border: Border.all(color: BlueSnapTheme.border, width: 0.5),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          UserAvatar(
+            name: device.userName,
+            colorIndex: device.avatarColorIndex,
+            size: 60,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            device.userName,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: BlueSnapTheme.username.copyWith(fontSize: 13),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            device.bio?.isNotEmpty == true ? device.bio! : 'Nearby now',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: BlueSnapTheme.caption
+                .copyWith(color: BlueSnapTheme.textSecondary, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: PillButton(
+              label: 'Message',
+              primary: true,
+              fullWidth: true,
+              height: 30,
+              onTap: () => _openChat(context, ref, device),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openChat(
+      BuildContext context, WidgetRef ref, NearbyDevice device) async {
+    final bt = ref.read(bluetoothProvider);
+    // Kick off a connection (no-op if already connected).
+    bt.connectToDevice(device.deviceId);
+    final conv = await ref.read(conversationsProvider.notifier).getOrCreate(
+          device.deviceId,
+          device.userName,
+          device.avatarColorIndex,
+        );
+    if (!context.mounted) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatWindowScreen(
+          conversationId: conv.id,
+          peerId: conv.peerId,
+          peerName: conv.peerName,
+          peerColorIndex: conv.peerAvatarColorIndex,
+        ),
+      ),
+    );
   }
 }
 

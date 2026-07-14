@@ -6,9 +6,11 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme.dart';
 import '../../core/app_icons.dart';
+import '../../core/constants.dart';
 import '../../data/models/models.dart';
 import '../../providers/providers.dart';
 import '../../widgets/shared_widgets.dart';
+import '../home/post_detail_screen.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   final void Function(NearbyDevice device) onDeviceTap;
@@ -43,11 +45,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Row(
                 children: [
-                  Text('Nearby', style: BlueSnapTheme.headingL),
+                  Text('Explore', style: BlueSnapTheme.headingL),
                 ],
               ),
             ),
-            // ── Search bar (filters discovered people) ──
+            // ── Search bar ──────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Container(
@@ -82,11 +84,65 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             ),
             const SizedBox(height: 4),
 
-            // ── Body: real discovered people only ──
-            Expanded(child: _nearbyList()),
+            // ── Body: searching → people; otherwise → explore grid ──
+            Expanded(child: _query.isNotEmpty ? _nearbyList() : _explore()),
           ],
         ),
       ),
+    );
+  }
+
+  /// Explore: public photos + videos shared by people near you. Everything that
+  /// propagates to your device is public (private posts stay on the author's
+  /// phone), so this grid is exactly the public content around you.
+  Widget _explore() {
+    final me = ref.watch(currentUserProvider);
+    final posts = ref
+        .watch(postsProvider)
+        .where((p) => p.authorId != me?.id && p.mediaPath != null)
+        .toList();
+
+    if (posts.isEmpty) {
+      // Still discovering over the air → shimmer skeleton; genuinely nothing
+      // around → the empty state. (No internet fetch — this is all local/P2P.)
+      return ref.read(bluetoothProvider).isScanning
+          ? const SkeletonGrid()
+          : const _NearbyEmpty();
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(1),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 1.5,
+        crossAxisSpacing: 1.5,
+      ),
+      itemCount: posts.length,
+      itemBuilder: (_, i) {
+        final post = posts[i];
+        return GestureDetector(
+          onTap: () => Navigator.push(context,
+              MaterialPageRoute(builder: (_) => PostDetailScreen(post: post))),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              MediaImage(
+                path: post.mediaPath!,
+                fit: BoxFit.cover,
+                isVideo: post.isVideo,
+                fallbackColor:
+                    AvatarColors.fromIndex(post.authorAvatarColorIndex),
+              ),
+              if (post.isVideo)
+                const Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Icon(AppIcons.play, color: Colors.white, size: 18),
+                ),
+            ],
+          ),
+        ).animate().fadeIn(duration: 220.ms, delay: (i * 25).ms);
+      },
     );
   }
 

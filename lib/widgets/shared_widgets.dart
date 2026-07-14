@@ -424,6 +424,62 @@ class SkeletonList extends StatelessWidget {
   }
 }
 
+/// A shimmering 3-column grid placeholder — shown while nearby media is still
+/// being discovered (offline, over the air; nothing is fetched from the net).
+class SkeletonGrid extends StatelessWidget {
+  final int count;
+  const SkeletonGrid({super.key, this.count = 12});
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(1),
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 1.5,
+        crossAxisSpacing: 1.5,
+      ),
+      itemCount: count,
+      itemBuilder: (_, __) => Shimmer.fromColors(
+        baseColor: BlueSnapTheme.surface2,
+        highlightColor: BlueSnapTheme.surface3,
+        child: Container(color: BlueSnapTheme.surface2),
+      ),
+    );
+  }
+}
+
+/// A horizontal row of shimmering "person" cards for the nearby carousel.
+class SkeletonPeopleRow extends StatelessWidget {
+  final int count;
+  const SkeletonPeopleRow({super.key, this.count = 4});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 188,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        itemCount: count,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (_, __) => Shimmer.fromColors(
+          baseColor: BlueSnapTheme.surface2,
+          highlightColor: BlueSnapTheme.surface3,
+          child: Container(
+            width: 132,
+            decoration: BoxDecoration(
+              color: BlueSnapTheme.surface2,
+              borderRadius: BorderRadius.circular(BlueSnapTheme.radiusL),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════
 // USER AVATAR
 // ══════════════════════════════════════════════════════════

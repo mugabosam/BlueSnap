@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../../core/theme.dart';
 import '../../core/constants.dart';
 import '../../data/models/models.dart';
@@ -31,6 +32,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   int _currentIndex = 0;
   late AnimationController _progressController;
   final _replyController = TextEditingController();
+  final _audio = AudioPlayer();
   bool _showReplyBar = false;
 
   Story get _currentStory => widget.stories[_currentIndex];
@@ -53,6 +55,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   void dispose() {
     _progressController.dispose();
     _replyController.dispose();
+    _audio.dispose();
     super.dispose();
   }
 
@@ -63,6 +66,18 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _currentStory.isViewed = true;
     _currentStory.viewCount += 1;
     _currentStory.save();
+    _playStoryMusic();
+  }
+
+  /// Play the soundtrack the author attached to this story, if any.
+  Future<void> _playStoryMusic() async {
+    await _audio.stop();
+    final path = DatabaseService().getSetting('story_music_${_currentStory.id}');
+    if (path is String && path.isNotEmpty) {
+      try {
+        await _audio.play(DeviceFileSource(path));
+      } catch (_) {/* soundtrack missing/unsupported — ignore */}
+    }
   }
 
   void _nextStory() {

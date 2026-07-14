@@ -662,23 +662,33 @@ class NearbyService extends ChangeNotifier {
         ? _pendingFileMeta[endpointId]!.removeAt(0)
         : <String, dynamic>{};
 
-    // Resolve where the plugin dropped the received file. On Android 10 and
-    // below `filePath` is a real path; on newer versions `uri` is provided.
-    // ignore: deprecated_member_use
-    final srcPath = payload.filePath ?? payload.uri;
-    if (srcPath == null) {
-      debugPrint('[Nearby] Received file but no path available — dropping');
-      return;
-    }
+    final dir = await getApplicationDocumentsDirectory();
+    final fileName = (meta['fileName'] as String?) ??
+        'recv_${DateTime.now().millisecondsSinceEpoch}';
+    final destPath = '${dir.path}/$fileName';
 
     try {
-      final src = File(srcPath);
-      if (!await src.exists()) return;
-      final dir = await getApplicationDocumentsDirectory();
-      final fileName = (meta['fileName'] as String?) ??
-          'recv_${DateTime.now().millisecondsSinceEpoch}';
-      final destPath = '${dir.path}/$fileName';
-      await src.copy(destPath);
+      // On modern Android the plugin delivers received files as a content URI
+      // (content://…), which is NOT a filesystem path — File().copy() on it
+      // fails and the image never renders. Use the plugin's native copy helper
+      // for the URI case, and a plain file copy on older builds.
+      final uri = payload.uri;
+      // ignore: deprecated_member_use
+      final legacyPath = payload.filePath;
+      if (uri != null && uri.isNotEmpty) {
+        final ok = await _nearby.copyFileAndDeleteOriginal(uri, destPath);
+        if (!ok) {
+          debugPrint('[Nearby] copyFileAndDeleteOriginal failed — dropping');
+          return;
+        }
+      } else if (legacyPath != null) {
+        final src = File(legacyPath);
+        if (!await src.exists()) return;
+        await src.copy(destPath);
+      } else {
+        debugPrint('[Nearby] Received file but no path/uri — dropping');
+        return;
+      }
 
       // The peer controls msgType — validate it so a bogus index can't crash
       // rendering (MessageType.values[index] would throw a RangeError).

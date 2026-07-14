@@ -41,6 +41,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     final bt = BluetoothService();
     final nearby = NearbyService();
 
+    // Begin discovering people around you as soon as the app opens, so the
+    // Home "people near you" row and Explore populate everywhere (offline/P2P).
+    WidgetsBinding.instance.addPostFrameCallback((_) => bt.startScan());
+
     // Incoming connection requests: ask the user before trusting a peer, and
     // show the Nearby auth token so both sides can verify out-of-band.
     _pendingConnSub = nearby.onConnectionPending.listen((req) {
